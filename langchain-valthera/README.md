@@ -1,84 +1,82 @@
 # langchain-valthera
 
-This package contains the LangChain integration with Valthera
+**langchain-valthera** is an open-source package that integrates LangChain with the Valthera framework, enabling smarter and more timely user engagement through LLM agents.
 
 ## Installation
+
+Install the package via pip:
 
 ```bash
 pip install -U langchain-valthera
 ```
 
-And you should configure credentials by setting the following environment variables:
+Make sure to configure your credentials by setting the following environment variables:
+* `OPENAI_API_KEY`: Your OpenAI API key
+* Additional environment variables as needed for your data connectors
 
-OPENAI_API_KEY=open-ai-api-key
+## Tools
 
-## Valthera Tools
-
-`ValtheraTool` class exposes the tool from Valthera.
+The main component of the `langchain-valthera` package is the `ValtheraTool` which integrates with LangGraph agents.
 
 ```python
-class CustomDataSource(BaseConnector):
-    """    
-    Implement your data source
-    """
-    def get_user_data(self, user_id: str):
-        return {
-            ...
-            "hubspot_contact_id": "999-ZZZ",
-            "lifecycle_stage": "opportunity",
-            "lead_status": "engaged",
-            "lead_score": 100,  # 100 -> lead_score_factor = 1.0
-            "company_name": "MaxMotivation Corp.",
-            "last_contacted_date": "2023-09-20",
-            "marketing_emails_opened": 20,
-            "marketing_emails_clicked": 10,
-            ...
-        }
+from langchain_valthera.tools import ValtheraTool
+```
 
+### Overview
 
-data_aggregator = DataAggregator(
-    connectors={
-        "custom": CustomDataSource(),        
-    }
-)
+langchain-valthera leverages data from multiple sources to compute real-time engagement metrics. By evaluating a user's context, the framework helps determine the right time and approach to interact with users, ensuring that engagement actions are both timely and context-aware.
 
-reasoning_engine = ReasoningEngine(
-    llm=ChatOpenAI(
-        model_name="gpt-3.5-turbo",
-        temperature=0.0,
-        openai_api_key=os.environ.get("OPENAI_API_KEY")
-    )
-)
+### Key Components
 
-trigger_generator = TriggerGenerator(
-    llm=MockChatOpenAI(
-        model_name="gpt-3.5-turbo",
-        temperature=0.7,
-        openai_api_key=os.environ.get("OPENAI_API_KEY")
-    )
-)
+* **Data Aggregator**: Collects and unifies data from various sources like HubSpot, PostHog, and Snowflake.
+* **Scorer**: Computes user engagement scores (motivation and ability) based on configurable metrics.
+* **Reasoning Engine**: Uses decision rules to determine the appropriate action (e.g., trigger engagement, improve motivation, or enhance ability).
+* **Trigger Generator**: Crafts personalized messages or notifications for user engagement.
 
+## Getting Started
 
-motivation_config = [
-    {"key": "lead_score", "weight": 0.30, "transform": lambda x: min(x, 100) / 100.0},
-    {"key": "events_count_past_30days", "weight": 0.30, "transform": lambda x: min(x, 50) / 50.0},
-    {"key": "marketing_emails_opened", "weight": 0.20, "transform": lambda x: min(x / 10.0, 1.0)},
-    {"key": "session_count", "weight": 0.20, "transform": lambda x: min(x / 5.0, 1.0)}
-]
+Here's a quick example of how to set up and run the Valthera agent using LangGraph React:
 
-ability_config = [
-    {"key": "onboarding_steps_completed", "weight": 0.30, "transform": lambda x: min(x / 5.0, 1.0)},
-    {"key": "session_count", "weight": 0.30, "transform": lambda x: min(x / 10.0, 1.0)},
-    {"key": "behavior_complexity", "weight": 0.40, "transform": lambda x: 1 - (min(x, 5) / 5.0)}
-]
+```python
+import os
+from langchain_openai import ChatOpenAI
+from langchain_valthera.tools import ValtheraTool
+from langgraph.prebuilt import create_react_agent
 
-scorer = ValtheraScorer(motivation_config, ability_config)
+# Initialize your data aggregator and configurations (replace with your implementations)
+data_aggregator = ...  # e.g., DataAggregator(connectors=your_connectors)
+motivation_config = ...  # Your motivation scoring configuration
+ability_config = ...  # Your ability scoring configuration
+reasoning_engine = ...  # Your ReasoningEngine instance
+trigger_generator = ...  # Your TriggerGenerator instance
 
+# Instantiate the Valthera tool
 valthera_tool = ValtheraTool(
+    data_aggregator=data_aggregator,
     motivation_config=motivation_config,
     ability_config=ability_config,
     reasoning_engine=reasoning_engine,
-    trigger_generator=trigger_generator,
-    data_aggregator=mock_data_aggregator
+    trigger_generator=trigger_generator
 )
+
+# Create a LangGraph agent
+llm = ChatOpenAI(model_name="gpt-4-turbo", temperature=0.0, openai_api_key=os.environ.get("OPENAI_API_KEY"))
+tools = [valthera_tool]
+agent = create_react_agent(llm, tools=tools)
+
+# Define input for testing
+inputs = {
+    "messages": [("user", "Evaluate behavior for user_12345: Finish Onboarding")]
+}
+
+# Run the agent and print the responses
+for response in agent.stream(inputs, stream_mode="values"):
+    print(response)
 ```
+
+## Customization
+
+Developers can easily extend and customize langchain-valthera to fit their needs:
+* **Connectors**: Add or modify data connectors to pull information from different sources.
+* **Scoring Configurations**: Adjust weights and transformation functions to match your business logic.
+* **Decision Rules**: Define custom rules that determine which engagement action to trigger.
