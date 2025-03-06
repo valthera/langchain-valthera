@@ -1,135 +1,104 @@
-import os
-from typing import Type, Optional, List, Dict
+from typing import Optional, Type, Dict, Any, List
+from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field, PrivateAttr
-from langchain_openai import ChatOpenAI
-from valthera.agent import ValtheraAgent
-from valthera.aggregator import DataAggregator
-from valthera.scorer import ValtheraScorer
-from valthera.reasoning_engine import ReasoningEngine
-from valthera.trigger_generator import TriggerGenerator
-from valthera.models import User, Behavior
-from valthera.connectors.base import BaseConnector
+from langchain_core.callbacks import CallbackManagerForToolRun
 
+# Import Valthera models and agents (assumes these modules are in your environment)
+from valthera.models import UserContext, Behavior
+from valthera.agents.behavioral.fogg_model.trigger_decision_agent.agent import TriggerDecisionAgent  # Adjust as needed
+
+# Define Pydantic models for the tool's input data.
+class UserContextModel(BaseModel):
+    user_id: str = Field(..., description="Unique identifier for the user")
+    connector_data: Dict[str, Dict] = Field(default_factory=dict, description="Connector data from various sources")
+    engagement_score: float = Field(0.0, description="Engagement score of the user")
+    funnel_stage: Optional[str] = Field(None, description="Current funnel stage of the user")
+    usage_frequency: float = Field(0.0, description="Usage frequency of the user")
+
+class BehaviorModel(BaseModel):
+    behavior_id: str = Field(..., description="Unique identifier for the behavior")
+    name: str = Field(..., description="Name of the behavior")
+    description: str = Field(..., description="Detailed description of the behavior")
 
 class ValtheraToolInput(BaseModel):
-    """Input schema for Valthera tool."""
-    user_id: str = Field(..., description="Unique identifier for the user.")
-    email: str = Field(..., description="User's email address.")
-    behavior_id: str = Field(..., description="ID of the behavior being evaluated.")
-    behavior_name: str = Field(..., description="Name of the behavior.")
-    behavior_description: str = Field(..., description="Description of the behavior.")
-
-
-class ValtheraToolConfig(BaseModel):
-    """Configuration schema for Valthera tool."""
-    motivation_config: List[Dict] = Field(..., description="Scoring configuration for motivation.")
-    ability_config: List[Dict] = Field(..., description="Scoring configuration for ability.")
-
+    user_context: UserContextModel = Field(..., description="Aggregated user context data")
+    behavior: BehaviorModel = Field(..., description="Details of the target behavior")
 
 class ValtheraTool(BaseTool):
     """
-    LangChain tool for Valthera's behavior-driven AI.
+    ValtheraTool
 
-    ValtheraTool evaluates a user's motivation and ability for a given behavior using aggregated data
-    (HubSpot, PostHog, Snowflake, etc.), calculates behavior readiness, and generates personalized
-    triggers when conditions are met. It helps optimize user engagement by determining the right time
-    and message to prompt action.
+    This tool leverages the Valthera Fogg model-based decision engine to determine
+    if a trigger should be sent to a user for a specific behavior. It takes user context
+    and behavior details as input, scores the user's state, and returns a trigger recommendation.
     """
-    
-    name: str = "valthera_tool"
-    description: str = "Evaluates user readiness for a behavior and generates personalized triggers."
+    name: str = "ValtheraTool"
+    description: str = (
+        "Determines if a trigger should be sent based on the Fogg model using Valthera's "
+        "scoring and reasoning engine."
+    )
     args_schema: Type[BaseModel] = ValtheraToolInput
-
-    _data_aggregator: DataAggregator = PrivateAttr()
-    _scorer: ValtheraScorer = PrivateAttr()
-    _reasoning_engine: ReasoningEngine = PrivateAttr()
-    _trigger_generator: TriggerGenerator = PrivateAttr()
-
-    def __init__(
-        self,
-        data_aggregator: DataAggregator,
-        motivation_config: List[Dict],
-        ability_config: List[Dict],
-        reasoning_engine: Optional[ReasoningEngine] = None,
-        trigger_generator: Optional[TriggerGenerator] = None,
-        **kwargs
-    ):
-        super().__init__(**kwargs)
-        
-        self._data_aggregator = data_aggregator
     
-        self._scorer = ValtheraScorer(motivation_config, ability_config)
-                
-        self._reasoning_engine = reasoning_engine or ReasoningEngine(
-            llm=ChatOpenAI(
-                model_name="gpt-4o",
-                temperature=0.0,
-                openai_api_key=os.environ.get("OPENAI_API_KEY")
-            )
-        )
-
-        self._trigger_generator = trigger_generator or TriggerGenerator(
-            llm=ChatOpenAI(
-                model_name="gpt-4o",
-                temperature=0.7,
-                openai_api_key=os.environ.get("OPENAI_API_KEY")
-            )
-        )        
-
     def _run(
         self,
-        user_id: str,
-        email: str,
-        behavior_id: str,
-        behavior_name: str,
-        behavior_description: str
+        user_context: dict,
+        behavior: dict,
+        *,
+        run_manager: Optional[CallbackManagerForToolRun] = None
     ) -> str:
-        """Executes the Valthera tool for behavior-driven recommendations."""
+        # Convert Pydantic models to dictionaries if necessary.
+        if hasattr(user_context, "dict"):
+            user_context_data = user_context.dict()
+        else:
+            user_context_data = user_context
+
+        if hasattr(behavior, "dict"):
+            behavior_data = behavior.dict()
+        else:
+            behavior_data = behavior
+
+        # Set behavior_weights as needed for your use case.
+        behavior_weights: List[Dict[str, Any]] = []  # Customize these weights if needed.
         
-        user = User(user_id=user_id, email=email)
-        behavior = Behavior(
-            behavior_id=behavior_id,
-            name=behavior_name,
-            description=behavior_description
-        )
+        # Instantiate the trigger decision agent.
+        agent = TriggerDecisionAgent(behavior_weights=behavior_weights)
         
-        agent = ValtheraAgent(
-            data_aggregator=self._data_aggregator,
-            bmat_scorer=self._scorer,
-            reasoning_engine=self._reasoning_engine,
-            trigger_generator=self._trigger_generator
-        )
-
-        recommendation = agent.run(user, behavior)
-
-        if recommendation:
-            return f"Trigger Message: {recommendation.trigger_message}, Channel: {recommendation.channel}, Confidence: {recommendation.confidence}"
-        return "No trigger recommended (suggested action might be to improve motivation or ability)."
-
-
-class CustomDataSource:
-    """
-    A class for representing custom data sources for Valthera tools.
-    
-    This class allows users to define and configure custom data sources
-    that can be used with Valthera tools for various operations.
-    """
-    
-    def __init__(self, name: str, config: dict = None):
-        """
-        Initialize a custom data source.
+        # Convert the input dictionaries to the respective data objects.
+        user_context_obj = UserContext(**user_context_data)
+        behavior_obj = Behavior(**behavior_data)
         
-        Args:
-            name: Name of the custom data source
-            config: Configuration dictionary for the data source
-        """
-        self.name = name
-        self.config = config or {}
-    
-    def get_config(self) -> dict:
-        """Return the configuration for this data source"""
-        return self.config
-    
-    def __repr__(self) -> str:
-        return f"CustomDataSource(name='{self.name}')"
+        # Run the agent to get a trigger recommendation.
+        recommendation = agent.run(user_context_obj, behavior_obj)
+        
+        if recommendation is None:
+            result = "No trigger recommendation."
+        else:
+            # If the recommendation is a dict, use dictionary access.
+            if isinstance(recommendation, dict):
+                trigger_message = recommendation.get("trigger_message", "No trigger message")
+                confidence = recommendation.get("confidence")
+                channel = recommendation.get("channel")
+                rationale = recommendation.get("rationale")
+            else:
+                trigger_message = recommendation.trigger_message
+                confidence = recommendation.confidence
+                channel = recommendation.channel
+                rationale = recommendation.rationale
+            
+            result = f"Trigger: {trigger_message}"
+            if confidence is not None:
+                result += f", Confidence: {confidence}"
+            if channel:
+                result += f", Channel: {channel}"
+            if rationale:
+                result += f", Rationale: {rationale}"
+        return result
+
+    async def _arun(
+        self,
+        user_context: dict,
+        behavior: dict,
+        *,
+        run_manager: Optional[CallbackManagerForToolRun] = None
+    ) -> str:
+        return self._run(user_context, behavior, run_manager=run_manager)
