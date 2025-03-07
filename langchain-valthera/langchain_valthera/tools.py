@@ -4,25 +4,29 @@ from langchain_core.tools import BaseTool
 from langchain_core.callbacks import CallbackManagerForToolRun
 
 # Import Valthera models and agents (assumes these modules are in your environment)
-from valthera.models import UserContext, Behavior
+from valthera.models import UserContext
 from valthera.agents.behavioral.fogg_model.trigger_decision_agent.agent import TriggerDecisionAgent  # Adjust as needed
 
-# Define Pydantic models for the tool's input data.
-class UserContextModel(BaseModel):
-    user_id: str = Field(..., description="Unique identifier for the user")
-    connector_data: Dict[str, Dict] = Field(default_factory=dict, description="Connector data from various sources")
-    engagement_score: float = Field(0.0, description="Engagement score of the user")
-    funnel_stage: Optional[str] = Field(None, description="Current funnel stage of the user")
-    usage_frequency: float = Field(0.0, description="Usage frequency of the user")
 
 class BehaviorModel(BaseModel):
     behavior_id: str = Field(..., description="Unique identifier for the behavior")
     name: str = Field(..., description="Name of the behavior")
     description: str = Field(..., description="Detailed description of the behavior")
 
+
+class ConnectorData(BaseModel):
+    """
+    ConnectorData encapsulates connector-specific data.
+    Customize this model by adding additional fields as required.
+    """
+    data: Dict[str, Any] = Field(default_factory=dict, description="Connector-specific data")
+
+
 class ValtheraToolInput(BaseModel):
-    user_context: UserContextModel = Field(..., description="Aggregated user context data")
-    behavior: BehaviorModel = Field(..., description="Details of the target behavior")
+    user_id: str = Field(..., description="Unique identifier for the user")
+    connector_data: ConnectorData = Field(..., description="Structured connector data")
+    behavior: BehaviorModel = Field(..., description="Behavior details including id, name, and description")
+
 
 class ValtheraTool(BaseTool):
     """
@@ -38,24 +42,17 @@ class ValtheraTool(BaseTool):
         "scoring and reasoning engine."
     )
     args_schema: Type[BaseModel] = ValtheraToolInput
-    
+
     def _run(
         self,
-        user_context: dict,
-        behavior: dict,
+        user_id: str,
+        connector_data: ConnectorData,
+        behavior: BehaviorModel,
         *,
         run_manager: Optional[CallbackManagerForToolRun] = None
     ) -> str:
-        # Convert Pydantic models to dictionaries if necessary.
-        if hasattr(user_context, "dict"):
-            user_context_data = user_context.dict()
-        else:
-            user_context_data = user_context
-
-        if hasattr(behavior, "dict"):
-            behavior_data = behavior.dict()
-        else:
-            behavior_data = behavior
+        # Convert behavior data using pydantic model
+        behavior_data = behavior.dict() if hasattr(behavior, "dict") else behavior
 
         # Set behavior_weights as needed for your use case.
         behavior_weights: List[Dict[str, Any]] = []  # Customize these weights if needed.
@@ -63,9 +60,12 @@ class ValtheraTool(BaseTool):
         # Instantiate the trigger decision agent.
         agent = TriggerDecisionAgent(behavior_weights=behavior_weights)
         
-        # Convert the input dictionaries to the respective data objects.
-        user_context_obj = UserContext(**user_context_data)
-        behavior_obj = Behavior(**behavior_data)
+        # Convert the input to the respective data objects.
+        user_context_obj = UserContext(
+            user_id=user_id,
+            connector_data=connector_data.dict()  # Convert ConnectorData to a dict
+        )
+        behavior_obj = BehaviorModel(**behavior_data)
         
         # Run the agent to get a trigger recommendation.
         recommendation = agent.run(user_context_obj, behavior_obj)
@@ -96,9 +96,15 @@ class ValtheraTool(BaseTool):
 
     async def _arun(
         self,
-        user_context: dict,
-        behavior: dict,
+        input_data: dict,
         *,
         run_manager: Optional[CallbackManagerForToolRun] = None
     ) -> str:
-        return self._run(user_context, behavior, run_manager=run_manager)
+        # Parse the input data using the defined args_schema
+        parsed_input = self.args_schema.parse_obj(input_data)
+        return self._run(
+            user_id=parsed_input.user_id,
+            connector_data=parsed_input.connector_data,
+            behavior=parsed_input.behavior,
+            run_manager=run_manager
+        )
