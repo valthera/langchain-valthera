@@ -8,14 +8,14 @@ version = "0.1.2"
 description = "An integration package connecting Valthera and LangChain"
 authors = []
 readme = "README.md"
-repository = "https://github.com/valthera/langchain-valthera/tree/main/langchain-valthera"
+repository = "https://github.com/valthera/langchain-valthera"
 license = "MIT"
 
 [tool.mypy]
 disallow_untyped_defs = "True"
 
 [tool.poetry.urls]
-"Source Code" = "https://github.com/valthera/langchain-valthera/tree/main/langchain-valthera"
+"Source Code" = "https://github.com/valthera/langchain-valthera"
 "Release Notes" = "https://github.com/valthera/langchain-valthera/releases"
 
 [tool.poetry.dependencies]
